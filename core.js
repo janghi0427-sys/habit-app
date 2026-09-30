@@ -302,6 +302,18 @@
     return { added: reconcile(s, kidId, viewToday(s, nowMs), 'adjust', nowMs) };
   }
 
+  // 첫 설정: 어제까지 streak일 연속 성공한 상태로 시작 (시작 날짜 = 어제 − (streak−1))
+  function seedHistory(s, kidId, streak, nowMs) {
+    var kid = getKid(s, kidId), today = kstDate(nowMs), yesterday = addDays(today, -1);
+    if (!isFinite(streak) || Math.floor(streak) !== streak || streak < 0 || streak > 3650) throw E('연속 성공일수를 확인해 주세요');
+    kid.startDate = streak ? addDays(yesterday, -(streak - 1)) : today;
+    for (var i = 1; i <= streak; i++) {
+      s.subs.push({ id: uid(s, 's'), kid: kidId, date: addDays(kid.startDate, i - 1), count: goalFor(i), hw: true, noHw: false, target: goalFor(i), estimated: false, at: nowMs, anomaly: false, status: 'approved', approvedAt: nowMs, source: 'initial', ruleVersion: RULE_VERSION });
+    }
+    if (streak) s.audit.push({ id: uid(s, 'a'), at: nowMs, kid: kidId, date: yesterday, type: 'seed', reason: '첫 설정: 어제 기준 ' + streak + '일 연속 성공', before: null, after: { streak: streak } });
+    return reconcile(s, kidId, today, 'adjust', nowMs);
+  }
+
   // 미리보기: 복사본에 적용하여 변경 전후를 비교
   function clone(s) { return JSON.parse(JSON.stringify(s)); }
   function preview(s, kidId, nowMs, mutator) {
@@ -337,7 +349,7 @@
     tick: tick, clockBlocked: clockBlocked, viewToday: viewToday,
     setDraft: setDraft, submit: submit, approve: approve, reject: reject,
     setMark: setMark, cancelMark: cancelMark, pay: pay, cancelPay: cancelPay,
-    applyCorrection: applyCorrection, applyStartDate: applyStartDate, preview: preview, clone: clone, verify: verify,
+    seedHistory: seedHistory, applyCorrection: applyCorrection, applyStartDate: applyStartDate, preview: preview, clone: clone, verify: verify,
     hasMark: hasMark, uid: uid, RULE_VERSION: RULE_VERSION
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;

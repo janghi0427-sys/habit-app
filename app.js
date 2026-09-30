@@ -110,9 +110,10 @@
     [0, 1].forEach(function (i) {
       h += '<div class="card"><h3>' + (i ? '둘째' : '첫째') + '</h3><label>별명</label><input type="text" id="sn' + i + '" maxlength="10" value="' + (i ? '둘째' : '첫째') + '">' +
         '<label>캐릭터</label><div class="chips" id="sc' + i + '">' + CH.map(function (c, j) { return '<button type="button" class="chip' + (j === i ? ' on' : '') + '" data-act="pickChip" data-g="sc' + i + '" data-v="' + c[0] + '">' + c[0] + ' ' + c[1] + '</button>'; }).join('') + '</div>' +
-        '<label>강조 색</label><div class="chips" id="sk' + i + '">' + COLORS.map(function (c, j) { return '<button type="button" class="chip' + (j === i ? ' on' : '') + '" data-act="pickChip" data-g="sk' + i + '" data-v="' + c + '" style="background:' + c + '">　</button>'; }).join('') + '</div></div>';
+        '<label>강조 색</label><div class="chips" id="sk' + i + '">' + COLORS.map(function (c, j) { return '<button type="button" class="chip' + (j === i ? ' on' : '') + '" data-act="pickChip" data-g="sk' + i + '" data-v="' + c + '" style="background:' + c + '">　</button>'; }).join('') + '</div>' +
+        '<label>어제까지 연속 성공일수</label><input type="number" id="ss' + i + '" inputmode="numeric" min="0" step="1" value="' + (i ? 21 : 26) + '"><p class="sub">0이면 오늘부터 시작해요. 그만큼의 성공 기록과 보상이 함께 만들어져요.</p></div>';
     });
-    h += '<div class="card"><label>시작 날짜 (첫 도전 날)</label><input type="date" id="sd" value="' + Core.kstDate(Date.now()) + '">' +
+    h += '<div class="card">' +
       '<label>보호자 PIN (숫자 6자리 이상, 아이폰 암호와 다른 번호)</label><input type="password" inputmode="numeric" class="pin" id="sp1" autocomplete="off">' +
       '<label>PIN 한 번 더</label><input type="password" inputmode="numeric" class="pin" id="sp2" autocomplete="off"></div>' +
       '<button class="btn" data-act="setupDone">설정 끝내기</button></main>';
@@ -561,19 +562,18 @@
     },
     // 설정 마법사
     setupDone: function () {
-      var p1 = val('sp1'), p2 = val('sp2'), sd = val('sd');
+      var p1 = val('sp1'), p2 = val('sp2'), now = Date.now();
       if (!validPin(p1)) { toast('PIN은 숫자 6자리 이상이에요'); return; }
       if (p1 !== p2) { toast('PIN이 서로 달라요'); return; }
-      if (!sd) { toast('시작 날짜를 골라 주세요'); return; }
       var s = Core.newState();
       [0, 1].forEach(function (i) {
         var nm = val('sn' + i).trim(); if (!nm) nm = i ? '둘째' : '첫째';
-        s.kids.push({ id: 'kid' + (i + 1), name: nm, character: selChip('sc' + i) || CH[i][0], color: selChip('sk' + i) || COLORS[i], startDate: sd });
+        s.kids.push({ id: 'kid' + (i + 1), name: nm, character: selChip('sc' + i) || CH[i][0], color: selChip('sk' + i) || COLORS[i], startDate: Core.kstDate(now) });
       });
       var code = newCode();
       s.family.pin = makeSecret(p1); s.family.recovery = makeSecret(normCode(code));
-      Core.tick(s, Date.now());
-      s.family.cleanedThrough = Core.addDays(Core.kstDate(Date.now()), -1);
+      Core.tick(s, now);
+      try { s.kids.forEach(function (k, i) { Core.seedHistory(s, k.id, Number(val('ss' + i)), now); }); } catch (e) { toast(e.message); return; }
       try { persist(s); } catch (e) { toast('저장할 수 없어요. 브라우저 저장 공간을 확인해 주세요'); return; }
       S = s; ui.setupCode = code; render();
     },
