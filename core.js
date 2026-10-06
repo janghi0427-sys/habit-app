@@ -336,6 +336,67 @@
     return { changes: changes, moneyBefore: mb, moneyAfter: ma, pendingAfter: a.pendingRows };
   }
 
+  // ---------- 기기 간 병합 (동기화) ----------
+  // 두 상태를 합친다. 같은 날짜를 양쪽에서 기록했으면 나중 기록이 이기고, 보상 장부는 다시 맞춘다.
+  // merge(x, x)는 x와 같고, 이미 합친 결과에 한쪽을 다시 합쳐도 바뀌지 않는다.
+  function subRank(st) { return st === 'valid' ? 0 : st === 'approved' ? 1 : 2; }
+  function unionById(A, B, pick) {
+    var at = {}, out = [];
+    A.forEach(function (x) { at[x.id] = out.length; out.push(x); });
+    B.forEach(function (y) {
+      if (at[y.id] === undefined) { at[y.id] = out.length; out.push(y); }
+      else if (pick) out[at[y.id]] = pick(out[at[y.id]], y);
+    });
+    return out;
+  }
+  function merge(a, b, nowMs) {
+    if (!a) return clone(b);
+    if (!b) return clone(a);
+    var s = clone(a), o = clone(b);
+    var del = {};
+    [s.deletedKids, o.deletedKids].forEach(function (d) { if (d) Object.keys(d).forEach(function (k) { del[k] = Math.max(del[k] || 0, d[k]); }); });
+    if (Object.keys(del).length || s.deletedKids) s.deletedKids = del;
+    s.kids = unionById(s.kids, o.kids, function (x, y) { return (y.updatedAt || 0) > (x.updatedAt || 0) ? y : x; })
+      .filter(function (k) { return !del[k.id]; });
+    s.subs = unionById(s.subs, o.subs, function (x, y) { return subRank(y.status) > subRank(x.status) ? y : x; });
+    s.marks = unionById(s.marks, o.marks, function (x, y) { return x.active && !y.active ? y : x; });
+    s.rewards = unionById(s.rewards, o.rewards);
+    s.payments = unionById(s.payments, o.payments);
+    s.audit = unionById(s.audit, o.audit);
+    ['subs', 'marks', 'rewards', 'payments', 'audit'].forEach(function (k) { s[k] = s[k].filter(function (x) { return !del[x.kid]; }); });
+    Object.keys(o.days || {}).forEach(function (kid) {
+      if (del[kid]) return;
+      var t = s.days[kid] = s.days[kid] || {};
+      Object.keys(o.days[kid]).forEach(function (d) { if (!t[d]) t[d] = o.days[kid][d]; });
+    });
+    Object.keys(del).forEach(function (kid) { delete s.days[kid]; });
+    Object.keys(o.reqIds || {}).forEach(function (k) { s.reqIds[k] = 1; });
+    s.seq = Math.max(s.seq || 0, o.seq || 0);
+    s.family.lastBackup = Math.max(s.family.lastBackup || 0, o.family.lastBackup || 0);
+    var c1 = s.family.cleanedThrough, c2 = o.family.cleanedThrough;
+    s.family.cleanedThrough = !c1 ? c2 : !c2 ? c1 : (c1 > c2 ? c1 : c2);
+    // 한 날짜에 승인된 기록은 하나: 나중에 저장된 것만 남긴다
+    var best = {};
+    s.subs.forEach(function (x) {
+      if (x.status !== 'approved') return;
+      var k = x.kid + '|' + x.date, c = best[k];
+      if (!c || x.at > c.at || (x.at === c.at && x.id > c.id)) best[k] = x;
+    });
+    s.subs.forEach(function (x) {
+      if (x.status === 'approved' && best[x.kid + '|' + x.date] !== x) { x.status = 'voided'; x.voidReason = '동기화: 나중 기록 우선'; }
+    });
+    // 같은 지급의 취소는 하나만
+    var cancelled = {};
+    s.payments = s.payments.filter(function (p) {
+      if (p.kind !== 'cancel') return true;
+      if (cancelled[p.targetId]) return false;
+      cancelled[p.targetId] = 1; return true;
+    });
+    var today = kstDate(nowMs);
+    s.kids.forEach(function (k) { reconcile(s, k.id, today, 'adjust', nowMs); });
+    return s;
+  }
+
   // 백업 검증: 재계산 결과와 장부가 일치하는지
   function verify(s, nowMs) {
     var today = kstDate(nowMs);
@@ -352,7 +413,7 @@
     tick: tick, viewToday: viewToday, recordDay: recordDay,
     setDraft: setDraft, submit: submit, approve: approve, reject: reject,
     setMark: setMark, cancelMark: cancelMark, pay: pay, cancelPay: cancelPay,
-    seedHistory: seedHistory, applyCorrection: applyCorrection, applyStartDate: applyStartDate, preview: preview, clone: clone, verify: verify,
+    seedHistory: seedHistory, applyCorrection: applyCorrection, applyStartDate: applyStartDate, preview: preview, clone: clone, verify: verify, merge: merge,
     hasMark: hasMark, uid: uid, RULE_VERSION: RULE_VERSION
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Core = api;

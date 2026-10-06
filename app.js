@@ -21,13 +21,14 @@
     ['pin', 'recovery', 'lock', 'notify', 'maxSeen', 'alertDays', 'sound'].forEach(function (k) { delete s.family[k]; });
     return s;
   }
-  function persist(c) { localStorage.setItem(KEY, JSON.stringify(c)); }
+  function saveLocal(c) { localStorage.setItem(KEY, JSON.stringify(c)); }
+  function persist(c) { saveLocal(c); if (window.Sync) Sync.changed(); }
   function run(fn) {
     var c = Core.clone(S);
     try { var r = fn(c, Date.now()); persist(c); S = c; return { ok: true, r: r }; }
     catch (e) { toast(e && e.message ? e.message : '저장하지 못했어요'); return { ok: false }; }
   }
-  function tickNow() { if (!S) return; try { Core.tick(S, Date.now()); persist(S); } catch (e) { /* 다음 동작에서 알림 */ } }
+  function tickNow() { if (!S) return; try { Core.tick(S, Date.now()); saveLocal(S); } catch (e) { /* 다음 동작에서 알림 */ } }
 
   // ---------- 유틸 ----------
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -85,7 +86,7 @@
   // ----- 첫 설정 -----
   function setupView() {
     var st = ui.setup = ui.setup || { kids: [{ name: '', ch: CH[0][0], color: COLORS[0], streak: '' }, { name: '', ch: CH[1][0], color: COLORS[1], streak: '' }] };
-    var h = '<main><h1>처음 설정</h1><p class="sub">아이마다 별명과 캐릭터를 정해 주세요. 이미 진행 중이었다면 어제까지의 연속 성공일수를 넣으면 그만큼의 기록과 보상이 함께 만들어져요.</p>';
+    var h = '<main><h1>처음 설정</h1>' + (Sync.configured ? '<div class="card"><h3>☁️ 다른 기기에서 쓰던 기록이 있나요?</h3>' + syncBody(true) + '</div><h2>새로 시작하기</h2>' : '') + '<p class="sub">아이마다 별명과 캐릭터를 정해 주세요. 이미 진행 중이었다면 어제까지의 연속 성공일수를 넣으면 그만큼의 기록과 보상이 함께 만들어져요.</p>';
     st.kids.forEach(function (k, i) {
       h += '<div class="card"><div class="row"><h3>아이 ' + (i + 1) + '</h3>' + (st.kids.length > 1 ? '<button class="btn small danger" data-act="setupDel" data-i="' + i + '">삭제</button>' : '') + '</div>' +
         '<label for="sn' + i + '">별명</label><input type="text" id="sn' + i + '" maxlength="10" value="' + esc(k.name) + '" placeholder="예: 첫째">' +
@@ -102,7 +103,7 @@
   // ----- 오늘 (홈) -----
   function homeView() {
     var D = selDate(), Y = Core.addDays(T, -1);
-    var h = '<div class="top"><div><h1>오늘 기록</h1><div class="date">' + fmtDate(D) + '</div></div></div><main>' +
+    var h = '<div class="top"><div><h1>오늘 기록</h1><div class="date">' + fmtDate(D) + '</div></div>' + syncBadge() + '</div><main>' +
       '<div class="seg"><button class="' + (ui.day === 'today' ? 'on' : '') + '" data-act="day" data-v="today">오늘 ' + fmtShort(T) + '</button><button class="' + (ui.day === 'yesterday' ? 'on' : '') + '" data-act="day" data-v="yesterday">어제 ' + fmtShort(Y) + '</button></div>';
     S.kids.forEach(function (k) { h += kidCard(k, D); });
     return h + '<p class="sub center">더 지난 날짜는 달력에서 고칠 수 있어요</p></main>';
@@ -192,7 +193,8 @@
     });
     h += '<button class="btn sec" data-act="kidAddOpen">+ 아이 추가</button>';
     h += '<button class="btn sec" data-act="go" data-v="rest">🛌 쉬는 날·숙제 없음 미리 지정</button>';
-    h += '<div class="card"><h3>백업과 복원</h3><p class="sub">기록은 이 폰에만 있어요. 마지막 백업: ' + (f.lastBackup ? fmtTime(f.lastBackup) : '아직 없어요') + '</p>' +
+    h += '<div class="card"><h3>☁️ 기기 간 동기화</h3>' + syncBody(false) + '</div>';
+    h += '<div class="card"><h3>백업과 복원</h3><p class="sub">' + (Sync.user ? '클라우드와 별도로 파일 백업도 해 두면 안전해요.' : '기록은 이 기기에만 있어요.') + ' 마지막 백업: ' + (f.lastBackup ? fmtTime(f.lastBackup) : '아직 없어요') + '</p>' +
       ((f.lastBackup ? Core.daysBetween(Core.kstDate(f.lastBackup), T) : 99) >= 30 ? '<div class="hint">백업한 지 30일이 넘었어요</div>' : '') +
       '<button class="btn small" data-act="backupOpen">백업 파일 만들기</button><button class="btn small sec" data-act="restoreOpen">백업에서 복원</button>' +
       (localStorage.getItem(PREV) ? '<button class="btn small danger" data-act="undoRestore">직전 복원 되돌리기</button>' : '') + '<input type="file" id="rfile" class="hide" accept=".hbk,.json,application/json"></div>';
@@ -226,9 +228,34 @@
     return h;
   }
 
+  // ---------- 동기화 표시 ----------
+  var SYNC_TXT = { starting: ['⏳', '연결 중'], 'signed-out': ['☁️', '로그인 필요'], syncing: ['⏳', '동기화 중'], ok: ['☁️', '동기화됨'], offline: ['📴', '오프라인 · 연결되면 올려요'], error: ['⚠️', '동기화 오류'] };
+  function syncBadge() {
+    if (!Sync.configured) return '';
+    var t = SYNC_TXT[Sync.status] || SYNC_TXT.starting;
+    return '<button class="badge syncb ' + (Sync.status === 'error' ? 'bad' : Sync.status === 'ok' ? 'ok' : '') + '" id="syncBadge" data-act="go" data-v="settings">' + t[0] + ' ' + t[1] + '</button>';
+  }
+  function syncBody(fromSetup) {
+    if (!Sync.configured) return '<p class="sub">아직 설정되지 않았어요. <b>firebase-config.js</b>에 Firebase 프로젝트 값을 넣으면 폰과 PC가 같은 기록을 써요. 설치 안내는 README를 보세요.</p>';
+    var t = SYNC_TXT[Sync.status] || SYNC_TXT.starting;
+    var h = '<p id="syncState">' + t[0] + ' ' + t[1] + (Sync.status === 'ok' && Sync.lastAt ? ' · ' + fmtTime(Sync.lastAt) : '') + '</p>' + (Sync.error ? '<div class="hint bad">' + esc(Sync.error) + '</div>' : '');
+    if (Sync.user) {
+      if (fromSetup) return h + '<p class="sub">' + esc(Sync.user.email) + '로 로그인했어요. 클라우드에 기록이 없으면 아래에서 새로 시작하세요.</p>';
+      return h + '<p class="sub">' + esc(Sync.user.email) + ' 계정으로 폰·PC가 같은 기록을 써요.</p><button class="btn small" data-act="syncNow">지금 동기화</button><button class="btn small sec" data-act="syncOut">로그아웃</button>';
+    }
+    if (Sync.status === 'starting' || !Sync.ready) return h;
+    return h + '<label for="syEmail">이메일</label><input type="email" id="syEmail" autocomplete="username" autocapitalize="off">' +
+      '<label for="syPw">비밀번호</label><input type="password" id="syPw" autocomplete="current-password">' +
+      '<button class="btn" data-act="syncIn">로그인' + (fromSetup ? '하고 불러오기' : '') + '</button><p class="sub">Firebase 콘솔에서 만든 이메일·비밀번호예요. 폰과 PC에서 같은 계정으로 로그인하세요.</p>';
+  }
+  function syncSummary(st) {
+    if (!st || !st.kids) return '기록 없음';
+    return st.kids.map(function (k) { return esc(k.name) + ' ' + won(Core.money(st, k.id).earned); }).join(', ');
+  }
+
   // ---------- 모달 ----------
   function openModal(m) { ui.modal = m; renderModal(); }
-  function closeModal() { ui.modal = null; renderModal(); }
+  function closeModal() { ui.modal = null; if (ui.needRender) { ui.needRender = false; render(); } else renderModal(); }
   function renderModal() {
     var el = $('modal'); if (!el) return;
     var m = ui.modal; if (!m) { el.innerHTML = ''; return; }
@@ -245,6 +272,11 @@
       case 'cancelPay':
         b = '<h2>지급 취소</h2><p class="sub">원래 기록은 남기고 취소 기록을 더해요. 한 번만 취소할 수 있어요.</p><label for="cpReason">취소 이유</label><input type="text" id="cpReason"><button class="btn danger" data-act="cancelPayOk" data-id="' + m.id + '">취소 기록 추가</button><button class="btn sec" data-act="modalClose">닫기</button>'; break;
       case 'start': b = startModal(m); break;
+      case 'syncFirst':
+        b = '<h2>클라우드에 기록이 있어요</h2><p>어느 기록을 쓸까요? 고르지 않은 쪽은 사라져요.</p>' +
+          '<div class="card"><b>클라우드</b> (' + fmtTime(m.meta.at || Date.now()) + ' 저장)<p class="sub">' + syncSummary(m.remote) + '</p></div>' +
+          '<div class="card"><b>이 기기</b><p class="sub">' + syncSummary(S) + '</p></div>' +
+          '<button class="btn" data-act="syncPick" data-v="cloud">클라우드 기록 쓰기 (권장)</button><button class="btn danger" data-act="syncPick" data-v="local">이 기기 기록으로 클라우드 덮어쓰기</button><button class="btn sec" data-act="syncPick" data-v="cancel">취소하고 로그아웃</button>'; break;
       case 'kidAdd':
         b = '<h2>아이 추가</h2><label for="kaName">별명</label><input type="text" id="kaName" maxlength="10"><label>캐릭터</label><div class="chips" id="kaCh">' + CH.map(function (c, j) { return '<button class="chip' + (j === 0 ? ' on' : '') + '" data-act="pickChip" data-v="' + c[0] + '" aria-label="' + c[1] + '">' + c[0] + '</button>'; }).join('') + '</div>' +
           '<label>강조 색</label><div class="chips" id="kaCo">' + COLORS.map(function (c, j) { return '<button class="chip' + (j === 0 ? ' on' : '') + '" data-act="pickChip" data-v="' + c + '" style="background:' + c + '" aria-label="색">　</button>'; }).join('') + '</div>' +
@@ -258,7 +290,7 @@
         var d = m.data, ks = d.kids.map(function (k) { var mo = Core.money(d, k.id); return '<tr><td>' + esc(k.name) + '</td><td>' + fmtShort(k.startDate) + '~</td><td>' + won(mo.earned) + '</td><td>' + won(mo.paid) + '</td></tr>'; }).join('');
         b = '<h2>복원 미리보기</h2><p>백업 날짜: ' + fmtTime(m.createdAt) + '</p><table><tr><th>아이</th><th>시작</th><th>적립</th><th>지급</th></tr>' + ks + '</table><div class="hint">지금 기록은 백업 내용으로 바뀌어요. 복원 직전 기록은 따로 보관돼서 설정에서 되돌릴 수 있어요.</div><button class="btn danger" data-act="restoreApply">복원하기</button><button class="btn sec" data-act="modalClose">취소</button>'; break; }
     }
-    el.innerHTML = '<div class="' + cls + '" data-act="modalBg" role="dialog" aria-modal="true"><div>' + b + '</div></div>';
+    el.innerHTML = '<div class="' + cls + '"' + (m.type === 'syncFirst' ? '' : ' data-act="modalBg"') + ' role="dialog" aria-modal="true"><div>' + b + '</div></div>';
   }
 
   // 아이에게 보여주기 (전체 화면)
@@ -481,7 +513,7 @@
     profileSave: function (d) {
       var nm = val('pn_' + d.id).trim(); if (!nm) { toast('별명을 입력해 주세요'); return; }
       var ch = selChip('pc_' + d.id), co = selChip('pk_' + d.id);
-      if (run(function (c) { var k = c.kids.filter(function (x) { return x.id === d.id; })[0]; k.name = nm; if (ch) k.character = ch; if (co) k.color = co; }).ok) { toast('저장했어요'); render(); }
+      if (run(function (c, now) { var k = c.kids.filter(function (x) { return x.id === d.id; })[0]; k.name = nm; if (ch) k.character = ch; if (co) k.color = co; k.updatedAt = now; }).ok) { toast('저장했어요'); render(); }
     },
     kidAddOpen: function () { openModal({ type: 'kidAdd' }); },
     kidAddOk: function () {
@@ -497,7 +529,8 @@
     kidDel: function (d) {
       var k = kid(d.id);
       if (!confirm(k.name + '의 기록·적립·지급 내역이 모두 지워져요. 되돌릴 수 없어요(백업이 있으면 복원 가능). 삭제할까요?')) return;
-      var r = run(function (c) {
+      var r = run(function (c, now) {
+        c.deletedKids = c.deletedKids || {}; c.deletedKids[d.id] = now; // 다른 기기에서도 지워지도록
         c.kids = c.kids.filter(function (x) { return x.id !== d.id; });
         ['marks', 'subs', 'rewards', 'payments', 'audit'].forEach(function (a) { c[a] = c[a].filter(function (x) { return x.kid !== d.id; }); });
         delete c.days[d.id];
@@ -515,6 +548,15 @@
       var r = run(function (c, now) { return Core.applyStartDate(c, m.kid, m.date, m.reason, now); });
       if (r.ok) { closeModal(); toast('시작 날짜를 바꿨어요'); render(); }
     },
+    syncIn: function () {
+      var em = val('syEmail').trim(), pw = val('syPw');
+      if (!em || !pw) { toast('이메일과 비밀번호를 넣어 주세요'); return; }
+      toast('로그인하는 중…');
+      Sync.signIn(em, pw).then(function () { toast('로그인했어요'); render(); }, function (e) { toast(e.message); });
+    },
+    syncOut: function () { if (confirm('로그아웃할까요? 이 기기 기록은 그대로 남아요.')) Sync.signOut().then(function () { toast('로그아웃했어요'); render(); }); },
+    syncNow: function () { Sync.syncNow(); },
+    syncPick: function (d) { var cb = ui.syncCb; ui.syncCb = null; closeModal(); if (cb) cb(d.v); },
     backupOpen: function () { openModal({ type: 'password', mode: 'export' }); },
     exportGo: async function () {
       var a = val('bkPw'), b = val('bkPw2');
@@ -537,12 +579,12 @@
       try {
         localStorage.setItem(PREV, JSON.stringify(S));
         d.audit.push({ id: Core.uid(d, 'a'), at: Date.now(), kid: null, date: T, type: 'restore', reason: '백업 복원', before: null, after: null });
-        persist(d); S = d; ui.restoreData = ui.restoreText = null; ui.form = {}; ui.editing = {}; tickNow(); closeModal(); toast('복원했어요'); render();
+        saveLocal(d); S = d; Sync.replace(); ui.restoreData = ui.restoreText = null; ui.form = {}; ui.editing = {}; tickNow(); closeModal(); toast('복원했어요'); render();
       } catch (e) { toast('복원하지 못했어요. 지금 기록은 그대로예요'); }
     },
     undoRestore: function () {
       if (!confirm('직전 복원 이전 기록으로 되돌릴까요?')) return;
-      try { var p = migrate(JSON.parse(localStorage.getItem(PREV))); persist(p); S = p; localStorage.removeItem(PREV); ui.form = {}; toast('되돌렸어요'); render(); } catch (e) { toast('되돌리지 못했어요'); }
+      try { var p = migrate(JSON.parse(localStorage.getItem(PREV))); saveLocal(p); S = p; Sync.replace(); localStorage.removeItem(PREV); ui.form = {}; toast('되돌렸어요'); render(); } catch (e) { toast('되돌리지 못했어요'); }
     }
   };
 
@@ -568,5 +610,18 @@
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(function () { });
+  Sync.init({
+    get: function () { return S; },
+    set: function (st) { // 다른 기기 변경을 받아 이 기기에 반영 (다시 올리지 않음)
+      S = migrate(st); saveLocal(S);
+      if (ui.modal) ui.needRender = true; else render();
+    },
+    onStatus: function () {
+      var b = $('syncBadge'); if (b) b.outerHTML = syncBadge();
+      if ((ui.view === 'settings' || !S) && !ui.modal && !(document.activeElement && /INPUT/.test(document.activeElement.tagName))) render();
+    },
+    onReplaced: function () { toast('다른 기기에서 기록을 통째로 바꿔서 그 내용으로 맞췄어요'); },
+    askFirst: function (remote, meta, cb) { ui.syncCb = cb; openModal({ type: 'syncFirst', remote: remote, meta: meta }); }
+  });
   tickNow(); render();
 })();
