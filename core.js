@@ -21,12 +21,7 @@
   function newState() {
     return {
       v: 1,
-      family: {
-        tz: 'Asia/Seoul', ruleVersion: RULE_VERSION, pin: null, recovery: null,
-        lock: { fails: 0, until: 0 }, notify: { on: false, time: '19:00' },
-        cleanedThrough: null, maxSeen: 0, lastBackup: 0, alertDays: 3,
-        sound: true, bigCount: 20000
-      },
+      family: { tz: 'Asia/Seoul', ruleVersion: RULE_VERSION, cleanedThrough: null, lastBackup: 0, bigCount: 20000 },
       kids: [], days: {}, marks: [], subs: [], rewards: [], payments: [], audit: [], reqIds: {}, seq: 0
     };
   }
@@ -67,7 +62,7 @@
       if (appr) {
         var g = grade(appr.count, appr.hw || noHw, tE);
         row.status = g === 'full' ? 'success' : g === 'half' ? 'partial' : 'fail'; row.subId = appr.id; row.count = appr.count; row.hw = !!appr.hw || noHw;
-        row.approvedAt = appr.approvedAt; row.at = appr.at; row.anomaly = appr.anomaly; row.source = appr.source;
+        row.approvedAt = appr.approvedAt; row.at = appr.at; row.source = appr.source;
         var rw = g === 'full' ? rewardFor(sE + 1) : g === 'half' ? halfReward(sE + 1) : 0;
         sE = g === 'full' ? sE + 1 : g === 'half' ? sE : 0;
         if (!blocked) { sC = sE; row.reward = rw; row.confirmed = true; confirmed[d] = rw; }
@@ -75,7 +70,7 @@
       } else if (val) {
         var gv = grade(val.count, val.hw || noHw, tE);
         row.status = 'pending'; row.subId = val.id; row.count = val.count; row.hw = !!val.hw || noHw;
-        row.at = val.at; row.anomaly = val.anomaly; row.subTarget = val.target; row.subEstimated = val.estimated;
+        row.at = val.at; row.subTarget = val.target; row.subEstimated = val.estimated;
         blocked = true; pendingCount += 1;
         row.pendingPartial = gv === 'half';
         row.expReward = gv === 'full' ? rewardFor(sE + 1) : gv === 'half' ? halfReward(sE + 1) : 0;
@@ -144,24 +139,15 @@
     return added;
   }
 
-  // ---------- 시각 관리 (9.4절, 5.3절) ----------
+  // ---------- 날짜 (부모 전용: 시각 조작 감지 없음) ----------
   function tick(s, nowMs) {
-    var f = s.family;
-    var anomaly = !!(f.maxSeen && nowMs < f.maxSeen - 10 * 60000);
-    if (nowMs > f.maxSeen) f.maxSeen = nowMs;
     var y = addDays(kstDate(nowMs), -1);
-    if (!f.cleanedThrough || y > f.cleanedThrough) f.cleanedThrough = y;
-    return anomaly;
+    if (!s.family.cleanedThrough || y > s.family.cleanedThrough) s.family.cleanedThrough = y;
   }
-  function clockBlocked(s, nowMs) { return !!(s.family.cleanedThrough && kstDate(nowMs) <= s.family.cleanedThrough); }
-  function viewToday(s, nowMs) {
-    var t = kstDate(nowMs);
-    return clockBlocked(s, nowMs) ? addDays(s.family.cleanedThrough, 1) : t;
-  }
+  function viewToday(s, nowMs) { return kstDate(nowMs); }
   function guardToday(s, kidId, nowMs) {
     var kid = getKid(s, kidId), t = kstDate(nowMs);
     if (t < kid.startDate) throw E('아직 시작 전이에요');
-    if (clockBlocked(s, nowMs)) throw E('휴대폰 시각이 바뀐 흔적이 있어요. 지난 날짜에는 새로 입력할 수 없어요');
     return t;
   }
   function once(s, reqId) {
@@ -193,18 +179,18 @@
     return { withdrawn: withdrawn };
   }
   function submit(s, kidId, nowMs) {
-    var anomaly = tick(s, nowMs);
+    tick(s, nowMs);
     var t = guardToday(s, kidId, nowMs);
     var row = computeKid(s, kidId, t).today;
     if (row.status !== 'ready') throw E('아직 제출할 수 없어요');
-    var sub = { id: uid(s, 's'), kid: kidId, date: t, count: row.count, hw: !!row.hw, noHw: row.noHw, target: row.target, estimated: row.estimated, at: nowMs, anomaly: anomaly, status: 'valid', ruleVersion: RULE_VERSION };
+    var sub = { id: uid(s, 's'), kid: kidId, date: t, count: row.count, hw: !!row.hw, noHw: row.noHw, target: row.target, estimated: row.estimated, at: nowMs, status: 'valid', ruleVersion: RULE_VERSION };
     s.subs.push(sub);
     return sub;
   }
 
   // ---------- 부모 동작 ----------
   function approve(s, subId, reqId, nowMs) {
-    var anomaly = tick(s, nowMs); void anomaly;
+    tick(s, nowMs);
     if (once(s, reqId)) return { duplicate: true };
     var sub = s.subs.filter(function (x) { return x.id === subId; })[0];
     if (!sub || sub.status !== 'valid') throw E('승인할 수 있는 기록이 아니에요');
@@ -292,11 +278,12 @@
       var cnt = Number(p.count);
       if (!isFinite(cnt) || Math.floor(cnt) !== cnt || cnt < 0) throw E('개수는 0 이상의 정수여야 해요');
       voidSubs('정정: 성공 인정');
-      s.subs.push({ id: uid(s, 's'), kid: p.kid, date: p.date, count: cnt, hw: !!p.hw, noHw: !!p.noHw, target: null, estimated: false, at: nowMs, anomaly: false, status: 'approved', approvedAt: nowMs, source: 'correction', ruleVersion: RULE_VERSION });
+      s.subs.push({ id: uid(s, 's'), kid: p.kid, date: p.date, count: cnt, hw: !!p.hw, noHw: !!p.noHw, target: null, estimated: false, at: nowMs, status: 'approved', approvedAt: nowMs, source: 'correction', ruleVersion: RULE_VERSION });
     } else if (p.mode === 'fail') {
       voidSubs('정정: 실패');
     }
-    s.audit.push({ id: uid(s, 'a'), at: nowMs, kid: p.kid, date: p.date, type: 'correction', mode: p.mode, reason: p.reason.trim(), before: beforeRow ? { status: beforeRow.status, count: beforeRow.count, reward: beforeRow.reward } : null, after: { mode: p.mode, count: p.count, hw: !!p.hw } });
+    var hadRecord = beforeRow && (beforeRow.subId || beforeRow.status === 'rest');
+    if (!p.quiet || hadRecord) s.audit.push({ id: uid(s, 'a'), at: nowMs, kid: p.kid, date: p.date, type: 'correction', mode: p.mode, reason: p.reason.trim(), before: beforeRow ? { status: beforeRow.status, count: beforeRow.count, reward: beforeRow.reward } : null, after: { mode: p.mode, count: p.count, hw: !!p.hw } });
     var added = reconcile(s, p.kid, today, 'adjust', nowMs);
     return { added: added };
   }
@@ -309,13 +296,22 @@
     return { added: reconcile(s, kidId, viewToday(s, nowMs), 'adjust', nowMs) };
   }
 
+  // 부모 기록: 오늘·어제는 이유 자동('부모 입력'), 그보다 오래된 날짜는 이유 필수.
+  // p: {kid, date, count, hw, noHw?, rest?, reason?}
+  function recordDay(s, p, nowMs) {
+    var recent = p.date >= addDays(kstDate(nowMs), -1);
+    var reason = String(p.reason || '').trim() || (recent ? '부모 입력' : '');
+    if (!reason) throw E('지난 날짜를 고칠 때는 이유를 적어 주세요');
+    return applyCorrection(s, { kid: p.kid, date: p.date, mode: p.rest ? 'rest' : 'success', count: p.count, hw: p.hw, noHw: p.noHw, reason: reason, quiet: recent }, nowMs);
+  }
+
   // 첫 설정: 어제까지 streak일 연속 성공한 상태로 시작 (시작 날짜 = 어제 − (streak−1))
   function seedHistory(s, kidId, streak, nowMs) {
     var kid = getKid(s, kidId), today = kstDate(nowMs), yesterday = addDays(today, -1);
     if (!isFinite(streak) || Math.floor(streak) !== streak || streak < 0 || streak > 3650) throw E('연속 성공일수를 확인해 주세요');
     kid.startDate = streak ? addDays(yesterday, -(streak - 1)) : today;
     for (var i = 1; i <= streak; i++) {
-      s.subs.push({ id: uid(s, 's'), kid: kidId, date: addDays(kid.startDate, i - 1), count: goalFor(i), hw: true, noHw: false, target: goalFor(i), estimated: false, at: nowMs, anomaly: false, status: 'approved', approvedAt: nowMs, source: 'initial', ruleVersion: RULE_VERSION });
+      s.subs.push({ id: uid(s, 's'), kid: kidId, date: addDays(kid.startDate, i - 1), count: goalFor(i), hw: true, noHw: false, target: goalFor(i), estimated: false, at: nowMs, status: 'approved', approvedAt: nowMs, source: 'initial', ruleVersion: RULE_VERSION });
     }
     if (streak) s.audit.push({ id: uid(s, 'a'), at: nowMs, kid: kidId, date: yesterday, type: 'seed', reason: '첫 설정: 어제 기준 ' + streak + '일 연속 성공', before: null, after: { streak: streak } });
     return reconcile(s, kidId, today, 'adjust', nowMs);
@@ -353,7 +349,7 @@
   var api = {
     kstDate: kstDate, addDays: addDays, daysBetween: daysBetween, goalFor: goalFor, rewardFor: rewardFor, halfReward: halfReward, grade: grade,
     newState: newState, computeKid: computeKid, money: money, payCancelled: payCancelled, reconcile: reconcile,
-    tick: tick, clockBlocked: clockBlocked, viewToday: viewToday,
+    tick: tick, viewToday: viewToday, recordDay: recordDay,
     setDraft: setDraft, submit: submit, approve: approve, reject: reject,
     setMark: setMark, cancelMark: cancelMark, pay: pay, cancelPay: cancelPay,
     seedHistory: seedHistory, applyCorrection: applyCorrection, applyStartDate: applyStartDate, preview: preview, clone: clone, verify: verify,
