@@ -13,6 +13,9 @@
   function daysBetween(a, b) { return dnum(b) - dnum(a); }
   function goalFor(n) { return 1000 + 10 * Math.max(0, n - 20); }
   function rewardFor(n) { return 100 * n; }
+  // 줄넘기·숙제를 둘 다 하면 full, 하나만 하면 half(보상 절반·연속 유지), 둘 다 못 하면 none(실패)
+  function grade(count, hw, target) { var a = count >= target, b = !!hw; return a && b ? 'full' : (a || b ? 'half' : 'none'); }
+  function halfReward(n) { return rewardFor(n) / 2; }
 
   // ---------- 상태 ----------
   function newState() {
@@ -62,18 +65,21 @@
       row.n = sE + 1; row.target = tE; row.estimated = blocked; row.streakBefore = sE;
       var last = subs.filter(function (x) { return x.status !== 'valid' && x.status !== 'approved'; }).slice(-1)[0];
       if (appr) {
-        var ok = appr.count >= tE && (appr.hw || noHw);
-        row.status = ok ? 'success' : 'fail'; row.subId = appr.id; row.count = appr.count; row.hw = !!appr.hw || noHw;
+        var g = grade(appr.count, appr.hw || noHw, tE);
+        row.status = g === 'full' ? 'success' : g === 'half' ? 'partial' : 'fail'; row.subId = appr.id; row.count = appr.count; row.hw = !!appr.hw || noHw;
         row.approvedAt = appr.approvedAt; row.at = appr.at; row.anomaly = appr.anomaly; row.source = appr.source;
-        sE = ok ? sE + 1 : 0;
-        if (!blocked) { sC = sE; row.reward = ok ? rewardFor(sC) : 0; row.confirmed = true; confirmed[d] = row.reward; }
-        else row.expReward = ok ? rewardFor(sE) : 0;
+        var rw = g === 'full' ? rewardFor(sE + 1) : g === 'half' ? halfReward(sE + 1) : 0;
+        sE = g === 'full' ? sE + 1 : g === 'half' ? sE : 0;
+        if (!blocked) { sC = sE; row.reward = rw; row.confirmed = true; confirmed[d] = rw; }
+        else row.expReward = rw;
       } else if (val) {
-        var okv = val.count >= tE && (val.hw || noHw);
+        var gv = grade(val.count, val.hw || noHw, tE);
         row.status = 'pending'; row.subId = val.id; row.count = val.count; row.hw = !!val.hw || noHw;
         row.at = val.at; row.anomaly = val.anomaly; row.subTarget = val.target; row.subEstimated = val.estimated;
         blocked = true; pendingCount += 1;
-        sE = okv ? sE + 1 : 0; row.expReward = okv ? rewardFor(sE) : 0;
+        row.pendingPartial = gv === 'half';
+        row.expReward = gv === 'full' ? rewardFor(sE + 1) : gv === 'half' ? halfReward(sE + 1) : 0;
+        sE = gv === 'full' ? sE + 1 : gv === 'half' ? sE : 0;
       } else if (closed) {
         row.status = 'fail';
         var cand = draft.count !== undefined ? { c: draft.count, h: !!draft.hw } : (last ? { c: last.count, h: !!last.hw } : null);
@@ -83,7 +89,8 @@
         if (!blocked) { sC = 0; row.reward = 0; row.confirmed = true; confirmed[d] = 0; }
       } else {
         var cnt = draft.count || 0, hwOK = !!draft.hw || noHw;
-        row.status = (cnt >= tE && hwOK) ? 'ready' : 'progress';
+        var gt = grade(cnt, hwOK, tE);
+        row.status = gt === 'none' ? 'progress' : 'ready'; row.partial = gt === 'half';
         if (last && last.status === 'rejected') row.rejectReasons = last.reasons;
       }
       row.streakE = sE;
@@ -169,7 +176,7 @@
     var t = guardToday(s, kidId, nowMs);
     var row = computeKid(s, kidId, t).today;
     if (row.status === 'rest') throw E('오늘은 쉬는 날이에요');
-    if (row.status === 'success') throw E('이미 승인된 기록은 바꿀 수 없어요');
+    if (row.status === 'success' || row.status === 'partial') throw E('이미 승인된 기록은 바꿀 수 없어요');
     var days = s.days[kidId] = s.days[kidId] || {};
     var dr = days[t] = days[t] || { count: 0, hw: false };
     var changed = false;
@@ -190,7 +197,7 @@
     var t = guardToday(s, kidId, nowMs);
     var row = computeKid(s, kidId, t).today;
     if (row.status !== 'ready') throw E('아직 제출할 수 없어요');
-    var sub = { id: uid(s, 's'), kid: kidId, date: t, count: row.count, hw: true, noHw: row.noHw, target: row.target, estimated: row.estimated, at: nowMs, anomaly: anomaly, status: 'valid', ruleVersion: RULE_VERSION };
+    var sub = { id: uid(s, 's'), kid: kidId, date: t, count: row.count, hw: !!row.hw, noHw: row.noHw, target: row.target, estimated: row.estimated, at: nowMs, anomaly: anomaly, status: 'valid', ruleVersion: RULE_VERSION };
     s.subs.push(sub);
     return sub;
   }
@@ -225,7 +232,7 @@
     if (hasMark(s, kidId, date, kind)) return {};
     if (date === today) {
       var row = computeKid(s, kidId, today).today;
-      if (row && row.status === 'success') throw E('오늘 이미 성공한 기록은 과거 기록 정정으로 바꿔 주세요');
+      if (row && (row.status === 'success' || row.status === 'partial')) throw E('오늘 이미 성공한 기록은 과거 기록 정정으로 바꿔 주세요');
       if (kind === 'rest') s.subs.forEach(function (x) { if (x.kid === kidId && x.date === date && x.status === 'valid') { x.status = 'voided'; x.voidReason = '쉬는 날 지정'; } });
     }
     s.marks.push({ id: uid(s, 'm'), kid: kidId, date: date, kind: kind, reason: reason || '', at: nowMs, active: true });
@@ -344,7 +351,7 @@
   }
 
   var api = {
-    kstDate: kstDate, addDays: addDays, daysBetween: daysBetween, goalFor: goalFor, rewardFor: rewardFor,
+    kstDate: kstDate, addDays: addDays, daysBetween: daysBetween, goalFor: goalFor, rewardFor: rewardFor, halfReward: halfReward, grade: grade,
     newState: newState, computeKid: computeKid, money: money, payCancelled: payCancelled, reconcile: reconcile,
     tick: tick, clockBlocked: clockBlocked, viewToday: viewToday,
     setDraft: setDraft, submit: submit, approve: approve, reject: reject,

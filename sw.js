@@ -1,5 +1,5 @@
 // 오프라인 사용을 위한 캐시. 파일을 고치면 VERSION 숫자를 올린다.
-const VERSION = 'habit-v2';
+const VERSION = 'habit-v3';
 const FILES = ['./', 'index.html', 'style.css', 'sha256.js', 'core.js', 'app.js', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

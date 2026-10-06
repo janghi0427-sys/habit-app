@@ -8,7 +8,7 @@
   var REST_REASONS = ['여행', '몸이 아픔', '가족 일정', '직접 입력'];
   var PARENT_VIEWS = { parent: 1, approve: 1, rest: 1, settings: 1 };
   var STATUS = {
-    success: ['⭐', '성공', 'ok'], fail: ['○', '실패', ''], rest: ['🛌', '쉬는 날', 'rest'],
+    success: ['⭐', '성공', 'ok'], partial: ['🌗', '반액', 'wait'], fail: ['○', '실패', ''], rest: ['🛌', '쉬는 날', 'rest'],
     pending: ['⏳', '확인 대기', 'wait'], progress: ['📝', '진행 중', ''], ready: ['📤', '제출 가능', 'wait']
   };
 
@@ -137,12 +137,14 @@
     h += '<div class="row"><span>지금까지 번 돈</span><b class="money">' + won(m.earned) + '</b></div>';
     h += '<div class="row"><span>아직 받지 않은 돈</span><b class="money">' + won(m.payable) + '</b></div><hr style="border:0;border-top:1px solid var(--line)">';
     if (t.status === 'rest') h += '<p><b>😴 오늘은 쉬는 날</b></p><p class="sub">다음 도전은 ' + (I.expectedStreak + 1) + '일째</p>';
+    else if (t.status === 'partial') h += '<p>' + badge('partial') + ' <b>하나만 해서 절반 적립</b> · +' + won(t.reward) + '</p><p class="sub">연속 ' + I.expectedStreak + '일 유지 · 다음 활동일 목표 ' + num(Core.goalFor(I.expectedStreak + 1)) + '개</p>';
     else if (t.status === 'success') h += '<p>' + badge('success') + ' <b>오늘도 해냈어</b> · +' + won(t.reward) + '</p><p class="sub">다음 활동일 목표 ' + num(Core.goalFor(I.expectedStreak + 1)) + '개</p>';
     else {
       h += '<div class="row"><span>오늘 줄넘기</span><b class="money">' + num(t.count) + ' / ' + num(t.target) + '개' + (t.estimated ? ' (예상)' : '') + '</b></div>';
       h += '<div class="row"><span>숙제</span><b>' + (t.noHw ? '📖 오늘은 숙제 없음' : t.hw ? '✅ 숙제 완료' : '⬜ 숙제 아직') + '</b></div>';
       h += '<div class="row"><span>오늘 받을 수 있는 돈</span><b class="money">' + (t.estimated ? '예상 ' : '') + won(Core.rewardFor(t.n)) + '</b></div>';
       h += '<div class="row"><span>오늘 상태</span>' + badge(t.status) + '</div>';
+      if (t.status === 'ready' && t.partial) h += '<p class="sub">지금은 하나만 했어요. 이대로 내면 절반(' + won(Core.halfReward(t.n)) + ')만 받아요</p>';
     }
     if (I.pendingCount) h += '<div class="row"><span></span><span class="badge ' + (oldestPendingAge(k.id) >= S.family.alertDays ? 'urgent' : 'wait') + '">⏳ 아빠 확인 대기 ' + I.pendingCount + '건' + (oldestPendingAge(k.id) >= S.family.alertDays ? ' · 오래됐어요' : '') + '</span></div>';
     return h + '<button class="btn" data-act="openKid" data-id="' + k.id + '">오늘 할 일 보기</button></div>';
@@ -155,6 +157,7 @@
     h += '<div class="kidhead" ' + kidStyle(k) + '><div class="avatar">' + esc(k.character) + '</div><div><div class="name">' + esc(k.name) + '</div><div class="streak">🔥 연속 성공 ' + I.expectedStreak + '일</div></div></div>';
     if (!t) return h + '<div class="hint info">' + fmtDate(k.startDate) + '부터 시작해요</div></main>';
     if (t.status === 'rest') return h + '<div class="card center"><div class="big">😴</div><h2>오늘은 쉬는 날</h2><p>다음 도전은 ' + (I.expectedStreak + 1) + '일째예요</p></div></main>';
+    if (t.status === 'partial') return h + '<div class="card center"><div class="big">🌗</div><h2>오늘은 절반 적립</h2><p>오늘 번 돈 <b>' + won(t.reward) + '</b> · 지금까지 ' + won(m.earned) + '</p><p>연속 ' + I.expectedStreak + '일은 그대로야</p><p class="sub">내일은 둘 다 해서 ' + won(Core.rewardFor(I.expectedStreak + 1)) + ' 받자 · 목표 ' + num(Core.goalFor(I.expectedStreak + 1)) + '개</p></div></main>';
     if (t.status === 'success') return h + '<div class="card center"><div class="big">🎉</div><h2>오늘도 해냈어</h2><p>오늘 번 돈 <b>' + won(t.reward) + '</b> · 지금까지 ' + won(m.earned) + '</p><p class="sub">다음 활동일 목표 ' + num(Core.goalFor(I.expectedStreak + 1)) + '개</p></div></main>';
     var blockedClock = Core.clockBlocked(S, Date.now()), locked = blockedClock;
     h += '<div class="card"><div class="row"><span>오늘 목표</span><b class="money">' + num(t.target) + '개' + (t.estimated ? ' (예상)' : '') + '</b></div>';
@@ -176,7 +179,11 @@
     var need = t.target - t.count, why = '';
     if (need > 0) why = t.estimated ? '어제 기록을 아빠가 확인하기 전이라 ' + num(t.target) + '개가 목표예요' : '줄넘기 ' + num(need) + '개 더 하면 제출할 수 있어요';
     else if (!t.hw) why = '숙제까지 끝내면 오늘 도전 완료';
-    if (t.status === 'pending') h += '<div class="hint">⏳ 아빠 확인을 기다리고 있어요<br><span class="sub">바꾸면 아빠에게 다시 확인받아야 해요</span></div>';
+    if (t.status === 'pending') {
+      var pr = I.pendingRows.filter(function (x) { return x.date === t.date; })[0];
+      h += '<div class="hint">⏳ 아빠 확인을 기다리고 있어요' + (pr && pr.pendingPartial ? ' (하나만 해서 절반 ' + won(pr.expReward) + ')' : '') + '<br><span class="sub">바꾸면 아빠에게 다시 확인받아야 해요</span></div>';
+    }
+    else if (t.status === 'ready' && t.partial) h += '<div class="hint">' + (need > 0 ? '줄넘기 ' + num(need) + '개 더 하면' : '숙제까지 끝내면') + ' ' + won(Core.rewardFor(t.n)) + ' 받고 연속 ' + t.n + '일이 돼요' + (need > 0 && t.estimated ? '<br><span class="sub">어제 기록을 아빠가 확인하기 전이라 ' + num(t.target) + '개가 목표예요</span>' : '') + '</div><p class="sub center">하나만 하고 내면 절반(' + won(Core.halfReward(t.n)) + ')만 받고, 연속 ' + t.streakBefore + '일은 그대로예요</p><button class="btn" data-act="submitToday"' + (locked ? ' disabled' : '') + '>하나만 했어요 · 절반으로 확인받기</button>';
     else if (t.status === 'ready') h += '<button class="btn ok" data-act="submitToday"' + (locked ? ' disabled' : '') + '>다 했어요 아빠에게 확인받기</button>';
     else h += '<button class="btn" disabled>아빠에게 확인받기</button><p class="sub center">' + esc(why) + '</p>';
     return h + '</main>';
@@ -196,14 +203,15 @@
         h += '<div class="card kidcard" ' + kidStyle(k) + '><h3>' + esc(k.character) + ' ' + esc(k.name) + ' · ' + fmtDate(r.date) + (stale ? ' <span class="badge urgent">오래된 대기</span>' : '') + '</h3>' +
           '<div class="row"><span>그날 목표</span><b>' + num(r.target) + '개' + (r.subEstimated ? ' (제출 당시 예상)' : '') + '</b></div>' +
           '<div class="row"><span>입력한 개수</span><b>' + num(r.count) + '개</b></div>' +
-          '<div class="row"><span>숙제</span><b>' + (r.noHw ? '📖 숙제 없음' : '✅ 완료') + '</b></div>' +
+          '<div class="row"><span>숙제</span><b>' + (r.noHw ? '📖 숙제 없음' : r.hw ? '✅ 완료' : '⬜ 안 함') + '</b></div>' +
           '<div class="row"><span>제출 시각</span><b>' + fmtTime(r.at) + '</b></div>';
         if (r.anomaly) h += '<div class="hint bad">⚠️ 휴대폰 시각이 바뀐 흔적이 있어요</div>';
-        if (r.expReward) h += '<div class="hint good">승인하면 연속 ' + r.streakE + '일째 · +' + won(r.expReward) + '</div>';
+        if (r.pendingPartial) h += '<div class="hint">' + (r.count >= r.target ? '줄넘기만' : '숙제만') + ' 했어요. 승인하면 절반 +' + won(r.expReward) + ' · 연속 ' + r.streakE + '일 유지</div>';
+        else if (r.expReward) h += '<div class="hint good">승인하면 연속 ' + r.streakE + '일째 · +' + won(r.expReward) + '</div>';
         else h += '<div class="hint bad">지금 계산으로는 목표에 미달해서 성공으로 인정되지 않아요. 과거 기록을 먼저 확인해 주세요.</div>';
         if (tc) h += '<div class="hint info">반려하면 오늘 목표가 ' + num(tc.before.target) + '개 → ' + num(tc.after.target) + '개로 바뀌어요</div>';
         if (idx > 0) h += '<div class="hint">먼저 ' + fmtDate(rows[0].date) + ' 기록부터 확인해 주세요</div>';
-        h += '<button class="btn ok" data-act="approve" data-id="' + r.subId + '"' + (idx > 0 ? ' disabled' : '') + '>성공 승인</button>' +
+        h += '<button class="btn ok" data-act="approve" data-id="' + r.subId + '"' + (idx > 0 ? ' disabled' : '') + '>' + (r.pendingPartial ? '절반 승인' : '성공 승인') + '</button>' +
           '<button class="btn danger" data-act="rejectOpen" data-id="' + r.subId + '">반려</button></div>';
       });
     });
@@ -230,7 +238,7 @@
       if (ds === T) cls += ' today';
       h += '<button class="' + cls + '" data-act="dayOpen" data-d="' + ds + '"><span>' + d + '</span><span class="ic">' + ic + '</span><span class="t">' + tx + '</span></button>';
     }
-    h += '</div><p class="sub">⭐ 성공 · ○ 실패 · 🛌 쉬는 날 · ⏳ 확인 대기 · 📖 숙제 없음</p>';
+    h += '</div><p class="sub">⭐ 성공 · 🌗 반액 · ○ 실패 · 🛌 쉬는 날 · ⏳ 확인 대기 · 📖 숙제 없음</p>';
     if (ui.parent) {
       var cands = I.rows.filter(function (r) { return r.couldQualify; });
       if (cands.length) {
@@ -328,7 +336,7 @@
     h += '<div class="card"><h3>보호자 인증</h3><p class="sub">앱 전용 PIN만 사용해요. 아이폰 기기 암호는 쓰지 않아요.</p><button class="btn small" data-act="pinChange">PIN 변경</button><button class="btn small sec" data-act="codeNew">복구 코드 다시 만들기</button></div>';
     h += '<div class="card"><h3>백업과 복원</h3><p class="sub">마지막 백업: ' + (f.lastBackup ? fmtTime(f.lastBackup) : '아직 없어요') + '</p><button class="btn small" data-act="backupOpen">백업 파일 만들기</button><button class="btn small sec" data-act="restoreOpen">백업에서 복원</button>' +
       (localStorage.getItem(PREV) ? '<button class="btn small danger" data-act="undoRestore">직전 복원 되돌리기</button>' : '') + '<input type="file" id="rfile" class="hide" accept=".hbk,.json,application/json"></div>';
-    h += '<div class="card"><h3>규칙 안내</h3><p>성공 = 목표 이상 줄넘기 + 숙제 완료(또는 숙제 없음) + 부모 승인.</p><p>보상은 연속 성공일수 × 100원. 목표는 1,000개, 연속 21일째부터 하루 10개씩 늘어요.</p><p>실패하면 연속일수와 목표만 처음으로 돌아가고 번 돈은 그대로예요. 쉬는 날은 연속을 유지하지만 보상이 없어요.</p>' +
+    h += '<div class="card"><h3>규칙 안내</h3><p>성공 = 목표 이상 줄넘기 + 숙제 완료(또는 숙제 없음) + 부모 승인.</p><p>보상은 연속 성공일수 × 100원. 목표는 1,000개, 연속 21일째부터 하루 10개씩 늘어요.</p><p>줄넘기와 숙제 중 하나만 하면 그날 보상의 절반만 받고, 연속일수는 전날 그대로예요(오르지도 끊기지도 않아요).</p><p>둘 다 못 하면 실패: 연속일수와 목표만 처음으로 돌아가고 번 돈은 그대로예요. 쉬는 날은 연속을 유지하지만 보상이 없어요.</p>' +
       '<p class="sub">아플 때나 여행 때는 쉬는 날을 적극 활용해 주세요. 긴 연속 기록이 한 번의 실패로 끊기면 의욕을 잃을 수 있어요.</p>' +
       '<p class="sub">아이에게 폰을 건넬 때는 아이폰의 ‘손쉬운 사용 → 사용법 유도’로 이 앱에 고정하는 것을 권해요. (Face ID 인증은 웹앱 방식에서는 쓰지 않고, PIN만 사용해요.)</p></div></main>';
     return h;
@@ -394,7 +402,7 @@
     if (r.approvedAt) h += '<div class="row"><span>승인 시각</span><b>' + fmtTime(r.approvedAt) + '</b></div>';
     if (r.anomaly) h += '<div class="hint bad">휴대폰 시각이 바뀐 흔적이 있는 제출이에요</div>';
     if (r.source === 'correction') h += '<div class="hint info">부모가 정정한 기록이에요</div>';
-    if (r.status === 'success') h += '<div class="row"><span>확정 보상</span><b>' + (r.confirmed ? won(r.reward) : '확인 전 (예상 ' + won(r.expReward) + ')') + '</b></div>';
+    if (r.status === 'success' || r.status === 'partial') h += '<div class="row"><span>' + (r.status === 'partial' ? '확정 보상 (절반)' : '확정 보상') + '</span><b>' + (r.confirmed ? won(r.reward) : '확인 전 (예상 ' + won(r.expReward) + ')') + '</b></div>';
     if (r.status === 'pending') h += '<div class="row"><span>예상 보상</span><b>' + won(r.expReward || 0) + '</b></div>';
     S.subs.filter(function (s) { return s.kid === m.kid && s.date === m.date && s.status === 'rejected'; }).forEach(function (s) {
       h += '<div class="hint">반려됨 (' + fmtTime(s.rejectedAt) + '): ' + esc(s.reasons.join(', ')) + (s.rejectNote ? ' · ' + esc(s.rejectNote) : '') + '</div>';
@@ -408,7 +416,7 @@
     return h + '<button class="btn sec" data-act="modalClose">닫기</button>';
   }
 
-  var ST_TXT = { success: '성공', fail: '실패', rest: '쉬는 날', pending: '확인 대기', progress: '진행 중', ready: '제출 가능' };
+  var ST_TXT = { success: '성공', partial: '반액', fail: '실패', rest: '쉬는 날', pending: '확인 대기', progress: '진행 중', ready: '제출 가능' };
   function rowTxt(r) {
     if (!r) return '—';
     var t = ST_TXT[r.status];
@@ -431,8 +439,8 @@
   function corrModal(m) {
     var k = kid(m.kid);
     var h = '<h2>과거 기록 정정</h2><p>' + esc(k.name) + ' · ' + fmtDate(m.date) + '</p>' + (m.err ? '<div class="hint bad">' + esc(m.err) + '</div>' : '') +
-      '<label>이 날짜를</label><div class="seg"><button class="' + (m.mode === 'success' ? 'on' : '') + '" data-act="corrMode" data-v="success">성공으로 인정</button><button class="' + (m.mode === 'fail' ? 'on' : '') + '" data-act="corrMode" data-v="fail">실패</button><button class="' + (m.mode === 'rest' ? 'on' : '') + '" data-act="corrMode" data-v="rest">쉬는 날</button></div>';
-    if (m.mode === 'success') h += '<label>실제 줄넘기 개수</label><input type="number" id="cCount" inputmode="numeric" min="0" step="1" value="' + esc(m.count) + '"><label class="chk"><input type="checkbox" id="cHw"' + (m.hw ? ' checked' : '') + '> 숙제 완료</label>';
+      '<label>이 날짜를</label><div class="seg"><button class="' + (m.mode === 'success' ? 'on' : '') + '" data-act="corrMode" data-v="success">기록 인정</button><button class="' + (m.mode === 'fail' ? 'on' : '') + '" data-act="corrMode" data-v="fail">실패</button><button class="' + (m.mode === 'rest' ? 'on' : '') + '" data-act="corrMode" data-v="rest">쉬는 날</button></div>';
+    if (m.mode === 'success') h += '<p class="sub">입력한 개수와 숙제로 성공·반액·실패를 계산해요</p><label>실제 줄넘기 개수</label><input type="number" id="cCount" inputmode="numeric" min="0" step="1" value="' + esc(m.count) + '"><label class="chk"><input type="checkbox" id="cHw"' + (m.hw ? ' checked' : '') + '> 숙제 완료</label>';
     if (m.mode !== 'rest') h += '<label class="chk"><input type="checkbox" id="cNo"' + (m.noHw ? ' checked' : '') + '> 이 날은 숙제 없음</label>';
     h += '<label>수정 이유 (필수)</label><input type="text" id="cReason" value="' + esc(m.reason) + '" placeholder="예: 실제로 했는데 제출을 못 했음">' +
       '<button class="btn sec" data-act="corrPreview">영향 미리보기</button>';
@@ -601,7 +609,8 @@
       if (!r.ok) return;
       done(key); cache = {}; T = Core.viewToday(S, Date.now());
       var row = Core.computeKid(S, sub.kid, T).rows.filter(function (x) { return x.date === sub.date; })[0], k = kid(sub.kid);
-      if (row && row.status === 'success') { beep(); openModal({ type: 'celebrate', ok: true, title: '오늘도 해냈어', text: esc(k.name) + ' 연속 ' + row.streakE + '일 성공 · +' + won(row.reward) }); }
+      if (row && row.status === 'partial') { beep(); openModal({ type: 'celebrate', ok: true, title: '절반 적립', text: esc(k.name) + ' +' + won(row.reward) + ' · 연속 ' + row.streakE + '일은 그대로' }); }
+      else if (row && row.status === 'success') { beep(); openModal({ type: 'celebrate', ok: true, title: '오늘도 해냈어', text: esc(k.name) + ' 연속 ' + row.streakE + '일 성공 · +' + won(row.reward) }); }
       else openModal({ type: 'celebrate', ok: false, title: '승인했지만 성공으로 세지 않았어요', text: '지금 계산의 목표에 못 미쳐요. 달력에서 확인해 주세요.' });
       render();
     },
